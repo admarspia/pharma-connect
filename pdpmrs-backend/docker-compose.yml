@@ -1,0 +1,101 @@
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------
+  # Backend application (modular monolith)
+  # ---------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    ports:
+      - "4000:4000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ---------------------------------------------------------
+  # Data layer
+  # ---------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pdpmrs
+      POSTGRES_PASSWORD: pdpmrs
+      POSTGRES_DB: pdpmrs
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdpmrs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # ---------------------------------------------------------
+  # Intelligence layer (real, self-hosted AI services)
+  # ---------------------------------------------------------
+  paddleocr:
+    build:
+      context: ./docker/paddleocr
+    ports:
+      - "8866:8866"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "/init.sh"]
+    environment:
+      LLM_MODEL: qwen2.5:7b-instruct
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./docker/ollama/init.sh:/init.sh:ro
+    ports:
+      - "11434:11434"
+    # Uncomment to use a GPU if available on the host:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+  nllb:
+    build:
+      context: ./docker/nllb
+    ports:
+      - "8010:8010"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------
+  # Local email capture for development (Notification domain)
+  # ---------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "8025:8025" # web UI
+      - "1025:1025" # SMTP
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  uploads:
