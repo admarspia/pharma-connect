@@ -1,156 +1,169 @@
-# PDPMRS Backend
+# PDPMRS
 
-Pharmacy Discovery, Prescription Processing, and Medicine Reservation System —
-Node.js/TypeScript backend implementing the full domain scope from the SRS
-(patient, pharmacy, medicine, inventory, reservation, location, language,
-intelligence, notification, administration, integration, analytics).
+**Pharmacy Discovery, Prescription Processing, and Medicine Reservation System**
 
-## Architecture
+A platform that lets patients search for medicines, get their prescriptions read
+by an AI assistance layer, find nearby pharmacies that actually have stock, and
+reserve medicines for pickup — while pharmacies manage inventory and
+reservations, and platform administrators handle verification and oversight.
 
-Modular monolith (CON-008). One Express app, one PostgreSQL database, domains
-isolated under `src/domains/*` each with their own `schema` (Zod validation),
-`repository` (Prisma queries), `service` (business logic), `controller`
-(HTTP glue), and `routes`.
+Built for the Ethiopian pharmacy context, with multilingual support for
+English, Amharic, Oromoo, and Tigrinya.
+
+---
+
+## Repository layout
+
+This project is split into two applications plus a requirements document:
 
 ```
-src/
-  config/        env, Prisma client, Redis client
-  common/        logger, ApiError, response helpers
-  middleware/    auth/RBAC, validation, error handling, uploads
-  utils/         jwt, password hashing, token/OTP generation
-  domains/
-    patient/           registration, auth, prescriptions
-    pharmacy/           registration, auth, license upload
-    medicine/           catalog sync, search, translation
-    inventory/          stock CRUD, low-stock alerts
-    reservation/        lifecycle, review, completion
-    location/            geocoding, nearest-pharmacy search
-    language/            transliteration + translation orchestration
-    intelligence/         PaddleOCR / Qwen / NLLB clients + analysis services
-    notification/        email (SMTP), audit trail hooks
-    administration/      admin auth, license approval, analytics, audit logs
-    integration/          medicine provider + geocoding external clients
-  jobs/           reservation auto-expiration cron job
-  routes/         route aggregator mounted at /api/v1
+pdpmrs/
+├── pdpmrs-backend/     Node.js/TypeScript API, PostgreSQL, Redis, AI services
+├── pdpmrs-frontend/    Next.js 14 web app (patient, pharmacy, admin)
+└── docs/
+    └── PDPMRS-SRS.docx Software Requirements Specification (ISO/IEC/IEEE 29148)
 ```
 
-## Real AI integrations
+Each application has its own README with full setup instructions
+([`pdpmrs-backend/README.md`](./pdpmrs-backend/README.md),
+[`pdpmrs-frontend/README.md`](./pdpmrs-frontend/README.md)). This document
+covers the project as a whole.
 
-- **OCR** — `docker/paddleocr`: a FastAPI wrapper around PaddleOCR.
-- **LLM (Qwen)** — served via **Ollama** (OpenAI-compatible endpoint), used
-  for structured prescription/license extraction and medicine normalization.
-- **Translation (NLLB)** — `docker/nllb`: a FastAPI wrapper around
-  `facebook/nllb-200-distilled-600M`, results cached in Redis.
+---
 
-All AI calls are real HTTP requests to these services — nothing is mocked.
-Per CON-010, every AI output is advisory only; a human (patient, pharmacy
-admin, or platform admin) makes the actual decision.
+## What it does
 
-## Getting started
+| Domain | Capability |
+|---|---|
+| **Patient** | Register/verify/login, upload prescriptions, search medicines, reserve at a nearby pharmacy, track reservations |
+| **Pharmacy** | Register/verify/login, upload license for review, manage stock, accept/decline/complete reservations |
+| **Medicine catalog** | Synced from an external provider, cached in Redis, multilingual + phonetic search |
+| **Reservations** | Full lifecycle (pending → accepted/rejected → completed, or cancelled/expired), automatic expiration via background job |
+| **Location** | Geocoding-based address validation, distance-based nearby-pharmacy search |
+| **AI Assistance Layer** | OCR (PaddleOCR) + structured extraction (Qwen) for prescriptions and licenses, translation (NLLB) for medicine data — all **decision-support only**, never autonomous approval |
+| **Administration** | Pharmacy license approval/rejection, platform analytics, audit log review |
 
-### 1. Configure environment
+---
+
+## Architecture at a glance
+
+```
+┌──────────────────┐        ┌──────────────────────────┐
+│  Next.js Frontend │ ─────▶ │   Node.js Backend API    │
+│  (patient/pharmacy│  REST  │   (modular monolith,     │
+│   /admin UI)       │        │   12 domain modules)     │
+└──────────────────┘        └───────────┬──────────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+             ┌────────────┐       ┌─────────────┐       ┌──────────────┐
+             │ PostgreSQL │       │    Redis    │       │ File Storage │
+             │ (Prisma)   │       │  (caching)  │       │ (uploads)    │
+             └────────────┘       └─────────────┘       └──────────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+             ┌────────────┐       ┌─────────────┐       ┌──────────────┐
+             │ PaddleOCR  │       │ Qwen (Ollama)│      │  NLLB-200    │
+             │  (OCR)     │       │ (structured  │      │ (translation)│
+             │            │       │  extraction) │       │              │
+             └────────────┘       └─────────────┘       └──────────────┘
+```
+
+The backend follows a **modular monolithic architecture** — one deployable
+service, but internally separated into isolated domains (patient, pharmacy,
+medicine, inventory, reservation, location, language, intelligence,
+notification, administration, integration, analytics) so any domain could be
+extracted into its own service later without a redesign.
+
+Every AI output (prescription reading, license scoring, translation) is
+treated as **advisory only** — a human always makes the actual approve/reject
+decision. This is enforced structurally, not just by convention: the AI
+Assistance Layer has no code path that can set a reservation, prescription,
+or license to an approved state.
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS |
+| Backend | Node.js, TypeScript, Express, Prisma |
+| Database | PostgreSQL |
+| Cache | Redis |
+| OCR | PaddleOCR (self-hosted, FastAPI wrapper) |
+| LLM | Qwen 2.5, served via Ollama (OpenAI-compatible API) |
+| Translation | NLLB-200 (self-hosted, FastAPI wrapper) |
+| Auth | JWT + role-based access control (PATIENT / PHARMACY / ADMIN) |
+| Deployment | Docker + Docker Compose |
+
+---
+
+## Running the full stack locally
+
+### 1. Backend + infrastructure
 
 ```bash
-cp .env.example .env
-# edit JWT_SECRET, SMTP settings, etc.
-```
-
-### 2. Start infrastructure with Docker Compose
-
-```bash
-docker compose up -d postgres redis paddleocr ollama nllb mailhog
-```
-
-First boot of `ollama` and `nllb` will take a while — they pull/cache large
-model weights. `nllb` requires network access to Hugging Face at build time;
-`ollama` pulls the Qwen model at container start via `docker/ollama/init.sh`.
-
-### 3. Install dependencies and generate the Prisma client
-
-```bash
-npm install
-npx prisma generate
-```
-
-> **Note:** `prisma generate` needs network access to `binaries.prisma.sh` to
-> download its query engine. If you're working in a network-restricted
-> sandbox, this step must be run somewhere with full internet access — the
-> TypeScript source itself has already been verified to compile cleanly
-> against a generated client (all 8 "no exported member" errors seen in a
-> restricted sandbox trace back solely to this missing binary, not to the
-> application code).
-
-### 4. Run migrations and seed an admin user
-
-```bash
+cd pdpmrs-backend
+cp .env.example .env        # set JWT_SECRET at minimum
+docker-compose up -d --build
+# first boot of ollama/nllb takes a while — they pull/cache model weights
 npx prisma migrate dev --name init
-npm run prisma:generate
-SEED_ADMIN_EMAIL=admin@yourdomain.com SEED_ADMIN_PASSWORD=ChangeMe123! npx prisma db seed
+npx prisma db seed          # creates an initial admin account
 ```
 
-### 5. Run the API
+API is now live at `http://localhost:4000/api/v1`.
+
+### 2. Frontend
 
 ```bash
-npm run dev       # ts-node-dev, hot reload
-# or
-npm run build && npm start
+cd pdpmrs-frontend
+cp .env.local.example .env.local   # points at the backend above by default
+npm install
+npm run dev
 ```
 
-### 6. Full stack via Docker Compose
+App is now live at `http://localhost:3000`.
 
-```bash
-docker compose up -d --build
-```
+### 3. Check everything is wired up
 
-The API is served at `http://localhost:4000/api/v1`. Health check:
-`GET /api/v1/health`.
+- `GET http://localhost:4000/api/v1/health` → `{"success":true,"data":{"status":"ok"}}`
+- Visit `http://localhost:3000`, register a patient account, check
+  `http://localhost:8025` (Mailhog) for the verification email.
 
-## Key endpoints (v1)
+See each app's README for troubleshooting (network/DNS issues pulling Docker
+images, Prisma engine downloads, per-service health checks for PaddleOCR/
+Ollama/NLLB, etc).
 
-| Domain | Method & Path | Auth |
-|---|---|---|
-| Patient | `POST /patients/register` | none |
-| Patient | `POST /patients/verify-email` | none |
-| Patient | `POST /patients/login` | none |
-| Patient | `GET /patients/me` | PATIENT |
-| Prescription | `POST /prescriptions` (multipart `prescription`) | PATIENT |
-| Pharmacy | `POST /pharmacies/register` | none |
-| Pharmacy | `POST /pharmacies/me/license` (multipart `license`) | PHARMACY |
-| Medicine | `GET /medicines/search?q=&lang=` | none |
-| Medicine | `GET /medicines/:id?lang=` | none |
-| Inventory | `POST /inventory` | PHARMACY |
-| Inventory | `GET /inventory/low-stock` | PHARMACY |
-| Reservation | `POST /reservations` | PATIENT |
-| Reservation | `POST /reservations/:id/review` | PHARMACY |
-| Reservation | `POST /reservations/:id/complete` | PHARMACY |
-| Location | `GET /locations/pharmacies/nearby?lat=&lng=&radiusKm=` | none |
-| Admin | `POST /admin/login` | none |
-| Admin | `POST /admin/pharmacies/:id/license-decision` | ADMIN |
-| Admin | `GET /admin/analytics` | ADMIN |
+---
 
-## Design constraints honored
+## Documentation
 
-- **CON-002/011**: PostgreSQL is the sole persistent store; Prisma schema
-  covers every domain entity.
-- **CON-003/014**: Redis caches medicine details, search results, and
-  translations; cache misses fall through gracefully if Redis is down.
-- **CON-010**: AI Intelligence layer (`ocr.client`, `llm.client`,
-  `translation.client`) never sets an approval/rejection status itself —
-  license and reservation decisions stay with a human role.
-- **CON-015/018**: JWT-based auth (`auth.middleware.ts`) + role gate
-  (`requireRole`) for PATIENT / PHARMACY / ADMIN.
-- **CON-019**: External/AI service failures are caught and degrade
-  gracefully (e.g. address validation, transliteration, email) rather than
-  blocking the core account/reservation flows — see try/catch blocks in
-  `pharmacy.service.ts` and `language.service.ts`.
-- **Auditability**: every state-changing action funnels through
-  `recordAudit()` into the `audit_logs` table.
+- **[`docs/PDPMRS-SRS.docx`](./docs/PDPMRS-SRS.docx)** — full Software
+  Requirements Specification (ISO/IEC/IEEE 29148:2018 structure): functional
+  requirements with unique IDs per domain, design constraints, system
+  architecture, non-functional requirements, operational modes, and
+  stakeholder analysis. This is the source of truth for *what* the system is
+  supposed to do; the code is the implementation of it.
 
-## What's intentionally not built yet
+---
 
-This is the backend scaffold layer. Not included: the Next.js frontend,
-payment/delivery integrations, and the "future expansion" items listed
-per-domain in the SRS (batch tracking, drug interactions, SMS/push
-notifications, etc.) — all future-expansion points are structurally left
-open (separate service files per concern, integration layer abstraction)
-so they can be added without a redesign.
+## Project status
+
+This is an active scaffold, not a finished product. Built out so far:
+
+- ✅ Backend: all 12 domains, real AI service integration, reservation
+  lifecycle with automatic expiration, RBAC, audit logging
+- ✅ Frontend: patient, pharmacy, and admin flows covering the core journeys
+- ✅ Docker Compose orchestration for the full stack including AI services
+- ⬜ Automated test suite (unit/integration/e2e)
+- ⬜ Stock-aware pharmacy search (currently distance-only; stock is checked
+  at reservation submit time)
+- ⬜ Payment/delivery integration (out of scope per the SRS's "future
+  expansion" notes)
+- ⬜ CI/CD pipeline
+
+## License
+
+Not yet decided — add one before making this repository public.
