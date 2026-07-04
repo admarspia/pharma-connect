@@ -105,7 +105,7 @@ or license to an approved state.
 ### 1. Backend + infrastructure
 
 ```bash
-cd pdpmrs-backend
+cd pharma_connect_backend
 cp .env.example .env        # set JWT_SECRET at minimum
 docker-compose up -d --build
 # first boot of ollama/nllb takes a while — they pull/cache model weights
