@@ -1,4 +1,4 @@
-# PDPMRS
+# Pharma-Connect
 
 **Pharmacy Discovery, Prescription Processing, and Medicine Reservation System**
 
