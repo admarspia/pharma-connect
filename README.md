@@ -18,15 +18,15 @@ This project is split into two applications plus a requirements document:
 
 ```
 pdpmrs/
-├── pdpmrs-backend/     Node.js/TypeScript API, PostgreSQL, Redis, AI services
-├── pdpmrs-frontend/    Next.js 14 web app (patient, pharmacy, admin)
+├── pharma_connect_backend/     Node.js/TypeScript API, PostgreSQL, Redis, AI services
+├── pharma_connect_frontend/    Next.js 14 web app (patient, pharmacy, admin)
 └── docs/
     └── PDPMRS-SRS.docx Software Requirements Specification (ISO/IEC/IEEE 29148)
 ```
 
 Each application has its own README with full setup instructions
-([`pdpmrs-backend/README.md`](./pdpmrs-backend/README.md),
-[`pdpmrs-frontend/README.md`](./pdpmrs-frontend/README.md)). This document
+([`pharma_connect_backend/README.md`](./pharma_connect_backend/README.md),
+[`pharma_connect_frontend/README.md`](./pharma_connect_frontend/README.md)). This document
 covers the project as a whole.
 
 ---
@@ -118,7 +118,7 @@ API is now live at `http://localhost:4000/api/v1`.
 ### 2. Frontend
 
 ```bash
-cd pdpmrs-frontend
+cd pharma_connect_frontend
 cp .env.local.example .env.local   # points at the backend above by default
 npm install
 npm run dev
